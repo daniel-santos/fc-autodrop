@@ -5,12 +5,29 @@
 #include <cassert>
 #include <unistd.h>
 
-static bool debug = false;
-static uint8_t threshold = 0;
+// All hot-path scalars in one cache line. The deck itself lives on the
+// caller's stack (also 64-byte aligned) — this struct holds everything
+// else the inner loop touches.
+struct alignas(64) state {
+    unsigned	seed;		// current deal number (hot)
+    unsigned	loop_end;	// seed-loop termination value (hot)
+    unsigned	solvable;	// count of fully-cleared deals (hot)
+    unsigned	start;		// first seed (set once)
+    unsigned	end;		// last seed (set once)
+    uint8_t	threshold;	// print-if-placed-≥ threshold (hot)
+    uint8_t	flags;		// hot-path bitfield (see F_*)
 
-inline bool isDebug() {
-    return false;
-}
+    static constexpr uint8_t F_PRINT_ALL	= 1 << 0;
+    static constexpr uint8_t F_DEBUG		= 1 << 1;
+    static constexpr uint8_t F_END_SET		= 1 << 2;
+};
+
+static state S;
+
+static_assert(sizeof(state)  == 64, "state should fit one cache line");
+static_assert(alignof(state) == 64, "state should be cache-line aligned");
+
+inline bool isDebug() { return S.flags & state::F_DEBUG; }
 
 struct suit {
     uint8_t value;
@@ -82,26 +99,26 @@ struct alignas(64) deck {
 	}
     }
 
-    // Returns true if this deal is solvable. (solves in place)
+    // Returns remaining cards (0 == fully solvable). Sweeps bottom-to-top
+    // repeatedly until a sweep places nothing.
     uint8_t solve() {
-	uint8_t start = N - 1;
-
 	while (n) {
-	    uint8_t i, last_visible;
-	    for (i = last_visible = start; start != 0xff && i != 0xff; --i) {
+	    bool progress = false;
+	    for (uint8_t i = N - 1; i != 0xff; --i) {
 		auto &card = this->card(i);
-		if (card == 0xff) {
-		    --start;
-		    --last_visible;
+		if (card == 0xff)
 		    continue;
+		// Multi-step visibility: any non-0xff cell below us in this
+		// column covers us. Walk i+C, i+2C, ... while in range.
+		bool covered = false;
+		for (unsigned k = i + C; k < N; k += C) {
+		    if (cards[k] != 0xff) {
+			covered = true;
+			break;
+		    }
 		}
-		if (start - i >= C && cards[i + C] != 0xff) {
-		    if (last_visible - i > C)
-			return n;
+		if (covered)
 		    continue;
-		}
-		last_visible = i;
-		assert(i < N);
 
 		auto rank = card.rank();
 		auto suit = card.suit();
@@ -110,11 +127,12 @@ struct alignas(64) deck {
 		    ++*s;
 		    card = 0xff;
 		    --n;
+		    progress = true;
 		    if (isDebug())
 			print();
 		}
 	    }
-	    if (i == 0xff)
+	    if (!progress)
 		return n;
 	}
 	return n;
@@ -187,52 +205,49 @@ static void usage(const char *prog) {
 
 int main(int argc, char *argv[])
 {
-    unsigned start = 1;
-    unsigned end   = 0;        // sentinel: "not set yet"
-    bool end_set   = false;
-    bool print_all = false;
+    S.start = 1;
 
     int opt;
     while ((opt = getopt(argc, argv, "s:e:t:pdh")) != -1) {
 	switch (opt) {
-	case 's': start = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
+	case 's': S.start	= static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
 		  break;
-	case 'e': end   = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
-		  end_set = true;
+	case 'e': S.end		= static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
+		  S.flags	|= state::F_END_SET;
 		  break;
-	case 't': threshold = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10)); break;
-	case 'p': print_all = true; break;
-	case 'd': debug = true; break;
+	case 't': S.threshold	= static_cast<uint8_t>(std::strtoul(optarg, nullptr, 10)); break;
+	case 'p': S.flags	|= state::F_PRINT_ALL;	break;
+	case 'd': S.flags	|= state::F_DEBUG;	break;
 	case 'h': usage(argv[0]); return 0;
 	default:  usage(argv[0]); return 2;
 	}
     }
-    if (!end_set)
-	end = start;
-    if (!start || !end || start > MAX_SEED || end > MAX_SEED) {
+    if (!(S.flags & state::F_END_SET))
+	S.end = S.start;
+    if (!S.start || !S.end || S.start > MAX_SEED || S.end > MAX_SEED) {
 	std::fprintf(stderr, "Seeds must be in 1..0x%x\n", MAX_SEED);
 	return 2;
     }
 
     freecell_deck ordered;
     assert((reinterpret_cast<uintptr_t>(&ordered) & 63) == 0);
+    assert((reinterpret_cast<uintptr_t>(&S)       & 63) == 0);
 
-    unsigned solvable = 0;
-    const unsigned loop_end = (end + 1) & MAX_SEED;
-    for (unsigned seed = start; seed != loop_end; ++seed, seed &= MAX_SEED) {
+    S.loop_end = (S.end + 1) & MAX_SEED;
+    for (S.seed = S.start; S.seed != S.loop_end; ++S.seed, S.seed &= MAX_SEED) {
 	auto deal = ordered;
-	deal.shuffle(seed);
+	deal.shuffle(S.seed);
 
 	const uint8_t solved = deal.solve();
 	if (solved == 0)
-	    ++solvable;
+	    ++S.solvable;
 
-	if (print_all || solved <= threshold) {
-	    std::printf("Deal #%u%s\n", seed, solved == 0 ? "  [solvable]" : "");
+	if ((S.flags & state::F_PRINT_ALL) || solved <= S.threshold) {
+	    std::printf("Deal #%u%s\n", S.seed, solved == 0 ? "  [solvable]" : "");
 	    deal.print();
 	}
     }
 
-    std::printf("Scanned seeds %u..%u: %u solvable\n", start, end, solvable);
+    std::printf("Scanned seeds %u..%u: %u solvable\n", S.start, S.end, S.solvable);
     return 0;
 }
