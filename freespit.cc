@@ -8,13 +8,12 @@
 struct suit {
     uint8_t value;
 
-    static constexpr char letter[4]  = {'C','D','H','S'};
-    static constexpr const char *suitGlyphs[4] = {"♣", "♦", "♥", "♠"};
+    static constexpr char letters[4]		= {'C','D','H','S'};
+    static constexpr const char *glyphs[4]	= {"♣", "♦", "♥", "♠"};
 
     suit(uint8_t value) : value(value) {}
-    char getChar() const { return letter[value]; }
-    const char *getGlyph() const { return suitGlyphs[value]; }
-
+    char letter() const	      { return letters[value]; }
+    const char *glyph() const { return glyphs[value];  }
 };
 
 // Encoding matches KPat / MS Freecell:
@@ -26,13 +25,14 @@ struct card {
 
     static constexpr char ranks[13] = {'A','2','3','4','5','6','7','8','9','T','J','Q','K'};
 
-    char rankChar() const   { return ranks[value / 4]; }
-    suit getSuit() const    { return suit(value % 4);  }
-    uint8_t getRank() const { return value / 4; }
+    card(uint8_t value) : value(value) {}
+    char rankChar() const { return ranks[value / 4]; }
+    auto suit() const	  { return ::suit(value % 4); }
+    uint8_t rank() const  { return value / 4; }
 
     void toString(char *dest) const {
 	dest[0] = rankChar();
-	dest[1] = getSuit().getChar();
+	dest[1] = suit().letter();
 	dest[2] = 0;
     }
 };
@@ -50,7 +50,7 @@ struct alignas(64) deck {
 	memset(stack, 0, sizeof(stack));
     }
 
-    card getCard(unsigned i) const {return card{cards[i]};}
+    auto card(unsigned i) const { return ::card(cards[i]); }
     void swap(unsigned a, unsigned b) {
 	uint8_t tmp = cards[a];
 	cards[a] = cards[b];
@@ -88,9 +88,9 @@ struct alignas(64) deck {
 		    continue;
 		}
 		last_visible = i;
-		auto card = getCard(i);
-		auto rank = card.getRank();
-		auto suit = card.getSuit();
+		auto card = this->card(i);
+		auto rank = card.rank();
+		auto suit = card.suit();
 		auto s    = &stack[suit.value];
 		if (*s == rank) {
 		    ++*s;
@@ -103,16 +103,38 @@ struct alignas(64) deck {
     }
 
     // Freecell deal layout: 8 columns, row-major.
-    // Card k goes to column (k % 8), row (k / 8).
+    // Top row: 4 (empty) free cells then 4 foundation slots from stack[].
+    // Tableau: card k -> column (k % 8), row (k / 8). 0xff means consumed.
     void print() const {
 	constexpr unsigned cols = 8;
+
+	// Free cells: blank, 4 card-widths.
+	for (unsigned i = 0; i < 4; ++i)
+	    std::fputs("   ", stdout);
+	// Foundations: stack[s] is the rank EXPECTED next, so the visible
+	// top is stack[s] - 1. stack[s] == 0 -> empty slot.
+	for (unsigned s = 0; s < 4; ++s) {
+	    if (stack[s] == 0) {
+		std::fputs("   ", stdout);
+	    } else {
+		auto cd = ::card(static_cast<uint8_t>((stack[s] - 1) * 4 + s));
+		std::printf(" %c%s", cd.rankChar(), cd.suit().glyph());
+	    }
+	}
+	std::putchar('\n');
+
 	const unsigned rows = (N + cols - 1) / cols;
 	for (unsigned r = 0; r < rows; ++r) {
 	    for (unsigned c = 0; c < cols; ++c) {
 		unsigned k = r * cols + c;
 		if (k >= N) break;
-		card cd{cards[k]};
-		std::printf(" %c%s", cd.rankChar(), cd.getSuit().getGlyph());
+		uint8_t v = cards[k];
+		if (v == 0xff) {
+		    std::fputs("   ", stdout);
+		} else {
+		    auto cd = ::card(v);
+		    std::printf(" %c%s", cd.rankChar(), cd.suit().glyph());
+		}
 	    }
 	    std::putchar('\n');
 	}
@@ -148,7 +170,7 @@ int main(int argc, char *argv[])
 	switch (opt) {
 	case 's': start = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10)); break;
 	case 'e': end   = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
-		end_set = true; break;
+		  end_set = true; break;
 	case 'p': print_all = true; break;
 	case 'h': usage(argv[0]); return 0;
 	default:  usage(argv[0]); return 2;
