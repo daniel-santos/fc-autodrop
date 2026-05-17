@@ -89,14 +89,18 @@ struct alignas(64) deck {
 	cards[b] = tmp;
     }
 
-    // Microsoft Freecell LCG + top-down Fisher-Yates.
-    // Matches KPat's KpatShuffle::shuffled() so deal numbers agree with MS Freecell.
+    // Microsoft Freecell LCG + top-down Fisher-Yates, then reverse to
+    // match KPat's takeLast()-style dealing (kpat/src/freecell.cpp:184).
+    // After this, cards[r*8 + c] is the card at col c, row r of the
+    // KPat tableau.
     void shuffle(unsigned int seed) {
 	for (auto i = N; i > 1; --i) {
 	    seed = 214013 * seed + 2531011;
 	    unsigned rand = (seed >> 16) & 0x7fff;
 	    swap(i - 1, rand % i);
 	}
+	for (unsigned i = 0, j = N - 1; i < j; ++i, --j)
+	    swap(i, j);
     }
 
     // Returns remaining cards (0 == fully solvable). Sweeps bottom-to-top
