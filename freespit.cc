@@ -6,6 +6,11 @@
 #include <unistd.h>
 
 static bool debug = false;
+static uint8_t threshold = 0;
+
+inline bool isDebug() {
+    return false;
+}
 
 struct suit {
     uint8_t value;
@@ -49,7 +54,7 @@ struct card {
 template<unsigned N, uint8_t C>
 struct alignas(64) deck {
     uint8_t stack[4];	// Holds the rank it is expecting next
-    uint8_t n = N;
+    uint8_t n;
     ::card cards[N];
 
 
@@ -78,7 +83,7 @@ struct alignas(64) deck {
     }
 
     // Returns true if this deal is solvable. (solves in place)
-    bool solve() {
+    uint8_t solve() {
 	uint8_t start = N - 1;
 
 	while (n) {
@@ -92,7 +97,7 @@ struct alignas(64) deck {
 		}
 		if (start - i > C && cards[i + C] != 0xff) {
 		    if (last_visible - i > C)
-			return false;
+			return n;
 		    continue;
 		}
 		last_visible = i;
@@ -105,14 +110,14 @@ struct alignas(64) deck {
 		    ++*s;
 		    card = 0xff;
 		    --n;
-		    if (debug)
+		    if (isDebug())
 			print();
 		}
 	    }
 	    if (i == 0xff)
-		return false;
+		return n;
 	}
-	return true;
+	return n;
     }
 
     void makeSolveable() {
@@ -128,6 +133,7 @@ struct alignas(64) deck {
     void print() const {
 	constexpr unsigned cols = 8;
 
+	std::printf("n=%d\n", 52 - n);
 	// Free cells: blank, 4 card-widths.
 	for (unsigned i = 0; i < 4; ++i)
 	    std::fputs("   ", stdout);
@@ -187,11 +193,14 @@ int main(int argc, char *argv[])
     bool print_all = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "s:e:ph")) != -1) {
+    while ((opt = getopt(argc, argv, "s:e:t:pdh")) != -1) {
 	switch (opt) {
-	case 's': start = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10)); break;
+	case 's': start = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
+		  break;
 	case 'e': end   = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
-		  end_set = true; break;
+		  end_set = true;
+		  break;
+	case 't': threshold = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10)); break;
 	case 'p': print_all = true; break;
 	case 'd': debug = true; break;
 	case 'h': usage(argv[0]); return 0;
@@ -214,12 +223,12 @@ int main(int argc, char *argv[])
 	auto deal = ordered;
 	deal.shuffle(seed);
 
-	const bool solved = deal.solve();
-	if (solved)
+	const uint8_t solved = deal.solve();
+	if (solved == 0)
 	    ++solvable;
 
-	if (print_all || solved) {
-	    std::printf("Deal #%u%s\n", seed, solved ? "  [solvable]" : "");
+	if (print_all || solved <= threshold) {
+	    std::printf("Deal #%u%s\n", seed, solved == 0 ? "  [solvable]" : "");
 	    deal.print();
 	}
     }
