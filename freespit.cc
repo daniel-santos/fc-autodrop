@@ -95,7 +95,7 @@ struct alignas(64) deck {
 		    --last_visible;
 		    continue;
 		}
-		if (start - i > C && cards[i + C] != 0xff) {
+		if (start - i >= C && cards[i + C] != 0xff) {
 		    if (last_visible - i > C)
 			return n;
 		    continue;
