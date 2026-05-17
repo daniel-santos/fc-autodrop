@@ -5,6 +5,8 @@
 #include <cassert>
 #include <unistd.h>
 
+static bool debug = false;
+
 struct suit {
     uint8_t value;
 
@@ -25,10 +27,17 @@ struct card {
 
     static constexpr char ranks[13] = {'A','2','3','4','5','6','7','8','9','T','J','Q','K'};
 
+    card()		: value(0) {}
     card(uint8_t value) : value(value) {}
-    char rankChar() const { return ranks[value / 4]; }
-    auto suit() const	  { return ::suit(value % 4); }
-    uint8_t rank() const  { return value / 4; }
+    operator uint8_t() const	{ return value; }
+    char rankChar() const	{ return ranks[value / 4]; }
+    auto suit() const		{ return ::suit(value % 4); }
+    uint8_t rank() const	{ return value / 4; }
+    card &operator=(uint8_t value) {
+	assert(value < 52 || value == 0xff);
+	this->value = value;
+	return *this;
+    }
 
     void toString(char *dest) const {
 	dest[0] = rankChar();
@@ -39,24 +48,24 @@ struct card {
 
 template<unsigned N, uint8_t C>
 struct alignas(64) deck {
-    uint8_t n = N;
     uint8_t stack[4];	// Holds the rank it is expecting next
-    uint8_t cards[N];
+    uint8_t n = N;
+    ::card cards[N];
 
 
     deck() :n(N) {
 	for (unsigned i = 0; i < N; ++i)
-	    cards[i] = static_cast<uint8_t>(i);
+	    cards[i] = i;
 	memset(stack, 0, sizeof(stack));
     }
 
-    auto card(unsigned i) const { return ::card(cards[i]); }
+    auto card(unsigned i) const { return cards[i]; }
+    auto &card(unsigned i)	{ return cards[i]; }
     void swap(unsigned a, unsigned b) {
 	uint8_t tmp = cards[a];
 	cards[a] = cards[b];
 	cards[b] = tmp;
     }
-
 
     // Microsoft Freecell LCG + top-down Fisher-Yates.
     // Matches KPat's KpatShuffle::shuffled() so deal numbers agree with MS Freecell.
@@ -71,13 +80,12 @@ struct alignas(64) deck {
     // Returns true if this deal is solvable. (solves in place)
     bool solve() {
 	uint8_t start = N - 1;
-	// uint8_t visible[C];
-	// memset(visible, 1, C);
 
 	while (n) {
 	    uint8_t i, last_visible;
-	    for (i = last_visible = start; start != 0xff; --i) {
-		if (cards[i] == 0xff) {
+	    for (i = last_visible = start; start != 0xff && i != 0xff; --i) {
+		auto &card = this->card(i);
+		if (card == 0xff) {
 		    --start;
 		    --last_visible;
 		    continue;
@@ -88,19 +96,31 @@ struct alignas(64) deck {
 		    continue;
 		}
 		last_visible = i;
-		auto card = this->card(i);
+		assert(i < N);
+
 		auto rank = card.rank();
 		auto suit = card.suit();
 		auto s    = &stack[suit.value];
 		if (*s == rank) {
 		    ++*s;
-		    cards[i] = 0xff;
+		    card = 0xff;
 		    --n;
+		    if (debug)
+			print();
 		}
 	    }
+	    if (i == 0xff)
+		return false;
 	}
 	return true;
     }
+
+    void makeSolveable() {
+	for (uint8_t i = 0; i < 52; ++i) {
+	    card(51 - i) = i;
+	}
+    }
+
 
     // Freecell deal layout: 8 columns, row-major.
     // Top row: 4 (empty) free cells then 4 foundation slots from stack[].
@@ -154,7 +174,8 @@ static void usage(const char *prog) {
 	"Usage: %s [-s START] [-e END] [-p]\n"
 	"  -s START   first seed (default: 1, max: 0x7fffffff)\n"
 	"  -e END     last seed, inclusive (default: START)\n"
-	"  -p         print each deal (default: only print solvable ones)\n",
+	"  -p         print each deal (default: only print solvable ones)\n"
+	"  -d         debug spew\n",
 	prog);
 }
 
@@ -172,6 +193,7 @@ int main(int argc, char *argv[])
 	case 'e': end   = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
 		  end_set = true; break;
 	case 'p': print_all = true; break;
+	case 'd': debug = true; break;
 	case 'h': usage(argv[0]); return 0;
 	default:  usage(argv[0]); return 2;
 	}
@@ -182,7 +204,6 @@ int main(int argc, char *argv[])
 	std::fprintf(stderr, "Seeds must be in 1..0x%x\n", MAX_SEED);
 	return 2;
     }
-
 
     freecell_deck ordered;
     assert((reinterpret_cast<uintptr_t>(&ordered) & 63) == 0);
