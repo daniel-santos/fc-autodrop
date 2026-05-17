@@ -191,8 +191,8 @@ struct alignas(64) deck {
 
 typedef deck<52, 8> freecell_deck;
 
-static_assert(sizeof(freecell_deck) == 64,  "deck<52> should pad to one cache line");
-static_assert(alignof(freecell_deck) == 64, "deck<52> should be cache-line aligned");
+static_assert(sizeof(freecell_deck) == 64,  "freecell_deck should pad to one cache line");
+static_assert(alignof(freecell_deck) == 64, "freecell_deck should be cache-line aligned");
 
 // MS Freecell deal numbers are 1..2^31-1.
 constexpr unsigned MAX_SEED = 0x7fffffff;
