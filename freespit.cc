@@ -1,6 +1,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <cassert>
+#include <unistd.h>
 
 // Encoding matches KPat / MS Freecell:
 //   value = (rank_idx * 4) + suit_idx
@@ -49,6 +51,11 @@ struct alignas(64) deck {
         }
     }
 
+    // Returns true if this deal is solvable. TODO: actually solve.
+    bool solve() const {
+        return false;
+    }
+
     // Freecell deal layout: 8 columns, row-major.
     // Card k goes to column (k % 8), row (k / 8).
     void print() const {
@@ -66,17 +73,66 @@ struct alignas(64) deck {
     }
 };
 
-static_assert(sizeof(deck<52>) == 64, "deck<52> should pad to one cache line");
+static_assert(sizeof(deck<52>) == 64,  "deck<52> should pad to one cache line");
+static_assert(alignof(deck<52>) == 64, "deck<52> should be cache-line aligned");
+
+// MS Freecell deal numbers are 1..2^31-1.
+constexpr unsigned MAX_SEED = 0x7fffffff;
+
+static void usage(const char *prog) {
+    std::fprintf(stderr,
+        "Usage: %s [-s START] [-e END] [-p]\n"
+        "  -s START   first seed (default: 1, max: 0x7fffffff)\n"
+        "  -e END     last seed, inclusive (default: START)\n"
+        "  -p         print each deal (default: only print solvable ones)\n",
+        prog);
+}
 
 int main(int argc, char *argv[])
 {
-    unsigned seed = (argc > 1) ? static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)) : 1;
+    unsigned start = 1;
+    unsigned end   = 0;        // sentinel: "not set yet"
+    bool end_set   = false;
+    bool print_all = false;
+
+    int opt;
+    while ((opt = getopt(argc, argv, "s:e:ph")) != -1) {
+        switch (opt) {
+        case 's': start = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10)); break;
+        case 'e': end   = static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
+                  end_set = true; break;
+        case 'p': print_all = true; break;
+        case 'h': usage(argv[0]); return 0;
+        default:  usage(argv[0]); return 2;
+        }
+    }
+    if (!end_set)
+        end = start;
+    if (!start || !end || start > MAX_SEED || end > MAX_SEED) {
+        std::fprintf(stderr, "Seeds must be in 1..0x%x\n", MAX_SEED);
+        return 2;
+    }
+    ++end;
+    end &= MAX_SEED;
 
     deck<52> ordered;
-    deck<52> deal = ordered;
-    deal.shuffle(seed);
+    assert((reinterpret_cast<uintptr_t>(&ordered) & 63) == 0);
 
-    std::printf("Deal #%u\n", seed);
-    deal.print();
+    unsigned solvable = 0;
+    for (unsigned seed = start; seed != end; ++seed, seed &= MAX_SEED) {
+        deck<52> deal = ordered;
+        deal.shuffle(seed);
+
+        const bool solved = deal.solve();
+        if (solved)
+            ++solvable;
+
+        if (print_all || solved) {
+            std::printf("Deal #%u%s\n", seed, solved ? "  [solvable]" : "");
+            deal.print();
+        }
+    }
+
+    std::printf("Scanned seeds %u..%u: %u solvable\n", start, end, solvable);
     return 0;
 }
