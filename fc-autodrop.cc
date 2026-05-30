@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cassert>
 #include <unistd.h>
+#include <getopt.h>
 
 /**
  * All hot-path scalars in one cache line. The deck itself lives on the
@@ -78,9 +79,9 @@ struct card {
  * @param N is number of cards
  * @param C is number of columns
  */
-template<unsigned N, uint8_t C>
+template<unsigned N, uint8_t C, uint8_t F>
 struct alignas(64) deck {
-    //uint8_t free[4];	///< Free cells would go here
+    //uint8_t free[F];	///< Free cells would go here
     uint8_t stack[4];	///< Holds the next expected rank
     uint8_t n;		///< Cards remainings
     ::card cards[N];
@@ -158,41 +159,40 @@ struct alignas(64) deck {
 	return n;
     }
 
+    /** Rearranges deck to be fully solvable for testing purposes. */
     void makeSolveable() {
 	for (uint8_t i = 0; i < 52; ++i) {
 	    card(51 - i) = i;
 	}
     }
 
-
     /**
-     * Freecell deal layout: 8 columns, row-major.
-     * Top row: 4 (empty) free cells then 4 foundation slots from stack[].
-     * Tableau: card k -> column (k % 8), row (k / 8). 0xff means consumed.
+     * Freecell deal layout: C columns, row-major.
+     * Top row: F (empty) free cells then 4 foundation slots from stack[].
+     * Tableau: card k -> column (k % C), row (k / C). 0xff means consumed.
      */
     void print() const {
-	constexpr unsigned cols = 8;
-
 	std::printf("n=%d\n", 52 - n);
-	// Free cells: blank, 4 card-widths.
-	for (unsigned i = 0; i < 4; ++i)
+	// Free cells: blank, F card-widths.
+	for (unsigned i = 0; i < F; ++i)
 	    std::fputs("   ", stdout);
 	// Foundations: stack[s] is the rank EXPECTED next, so the visible
 	// top is stack[s] - 1. stack[s] == 0 -> empty slot.
 	for (unsigned s = 0; s < 4; ++s) {
-	    if (stack[s] == 0) {
+	    auto c = stack[s];
+	    if (c == 0) {
 		std::fputs("   ", stdout);
 	    } else {
-		auto cd = ::card(static_cast<uint8_t>((stack[s] - 1) * 4 + s));
+		auto cd = ::card((c - 1) * 4 + s);
 		std::printf(" %c%s", cd.rankChar(), cd.suit().glyph());
 	    }
 	}
 	std::putchar('\n');
 
-	const unsigned rows = (N + cols - 1) / cols;
+	const unsigned rows = (N + C - 1) / C;
 	for (unsigned r = 0; r < rows; ++r) {
-	    for (unsigned c = 0; c < cols; ++c) {
-		unsigned k = r * cols + c;
+	    for (unsigned c = 0; c < C; ++c) {
+		unsigned k = r * C + c;
 		if (k >= N) break;
 		uint8_t v = cards[k];
 		if (v == 0xff) {
@@ -207,7 +207,7 @@ struct alignas(64) deck {
     }
 };
 
-typedef deck<52, 8> freecell_deck;
+typedef deck<52, 8, 4> freecell_deck;
 
 static_assert(sizeof(freecell_deck) == 64,  "freecell_deck should pad to one cache line");
 static_assert(alignof(freecell_deck) == 64, "freecell_deck should be cache-line aligned");
@@ -217,20 +217,32 @@ constexpr unsigned MAX_SEED = 0x7fffffff;
 
 static void usage(const char *prog) {
     std::fprintf(stderr,
-	"Usage: %s [-s START] [-e END] [-p]\n"
-	"  -s START   first seed (default: 1, max: 0x7fffffff)\n"
-	"  -e END     last seed, inclusive (default: START)\n"
-	"  -p         print each deal (default: only print solvable ones)\n"
-	"  -d         debug spew\n",
+	"Usage: %s [OPTIONS]\n"
+	"  -s, --start     SEED   first seed (default: 1, max: 0x7fffffff)\n"
+	"  -e, --end       SEED   last seed, inclusive (default: START)\n"
+	"  -t, --threshold N      print deals with at most N cards remaining (default: 0)\n"
+	"  -p, --print-all        print every deal scanned\n"
+	"  -d, --debug            trace each card played\n"
+	"  -h, --help             show this message\n",
 	prog);
 }
+
+static const struct option long_opts[] = {
+    { "start",		required_argument,	nullptr, 's' },
+    { "end",		required_argument,	nullptr, 'e' },
+    { "threshold",	required_argument,	nullptr, 't' },
+    { "print-all",	no_argument,		nullptr, 'p' },
+    { "debug",		no_argument,		nullptr, 'd' },
+    { "help",		no_argument,		nullptr, 'h' },
+    { nullptr,		0,			nullptr,  0  },
+};
 
 int main(int argc, char *argv[])
 {
     S.start = 1;
 
     int opt;
-    while ((opt = getopt(argc, argv, "s:e:t:pdh")) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:e:t:pdh", long_opts, nullptr)) != -1) {
 	switch (opt) {
 	case 's': S.start	= static_cast<unsigned>(std::strtoul(optarg, nullptr, 10));
 		  break;

@@ -1,17 +1,18 @@
 CXX      := g++
 CXXFLAGS := -std=c++17 -O0 -march=native -ggdb3
+CXXFLAGS := -std=c++17 -O3 -fno-tree-vectorize -march=native -ggdb3
 CXXFLAGS := -std=c++17 -O2 -march=native -ggdb3
-WARNFLAGS:= -Wall -Wextra
+WARNFLAGS:= -Wall -Wextra -Wnon-virtual-dtor
 CXXFLAGS += $(WARNFLAGS)
 LDFLAGS  :=
 
-TARGETS  := freespit
+TARGETS  := fc-autodrop
 
 .PHONY: all clean
 
 all: $(TARGETS)
 
-freespit: freespit.cc
+fc-autodrop: fc-autodrop.cc
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 clean:
