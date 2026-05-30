@@ -5,17 +5,19 @@
 #include <cassert>
 #include <unistd.h>
 
-// All hot-path scalars in one cache line. The deck itself lives on the
-// caller's stack (also 64-byte aligned) — this struct holds everything
-// else the inner loop touches.
+/**
+ * All hot-path scalars in one cache line. The deck itself lives on the
+ * caller's stack (also 64-byte aligned) — this struct holds everything
+ * else the inner loop touches.
+ */
 struct alignas(64) state {
-    unsigned	seed;		// current deal number (hot)
-    unsigned	loop_end;	// seed-loop termination value (hot)
-    unsigned	solvable;	// count of fully-cleared deals (hot)
-    unsigned	start;		// first seed (set once)
-    unsigned	end;		// last seed (set once)
-    uint8_t	threshold;	// print-if-placed-≥ threshold (hot)
-    uint8_t	flags;		// hot-path bitfield (see F_*)
+    unsigned	seed;		///< current deal number (hot)
+    unsigned	loop_end;	///< seed-loop termination value (hot)
+    unsigned	solvable;	///< count of fully-cleared deals (hot)
+    unsigned	start;		///< first seed (set once)
+    unsigned	end;		///< last seed (set once)
+    uint8_t	threshold;	///< print-if-placed-≥ threshold (hot)
+    uint8_t	flags;		///< hot-path bitfield (see F_*)
 
     static constexpr uint8_t F_PRINT_ALL	= 1 << 0;
     static constexpr uint8_t F_DEBUG		= 1 << 1;
@@ -40,10 +42,12 @@ struct suit {
     const char *glyph() const { return glyphs[value];  }
 };
 
-// Encoding matches KPat / MS Freecell:
-//   value = (rank_idx * 4) + suit_idx
-//   rank_idx: 0=A, 1=2, ..., 9=T, 10=J, 11=Q, 12=K
-//   suit_idx: 0=C, 1=D, 2=H, 3=S
+/**
+ * Encoding matches KPat / MS Freecell:
+ *   value = (rank_idx * 4) + suit_idx
+ *   rank_idx: 0=A, 1=2, ..., 9=T, 10=J, 11=Q, 12=K
+ *   suit_idx: 0=C, 1=D, 2=H, 3=S
+ */
 struct card {
     uint8_t value;
 
@@ -68,10 +72,17 @@ struct card {
     }
 };
 
+/**
+ * A Freecell deck
+ *
+ * @param N is number of cards
+ * @param C is number of columns
+ */
 template<unsigned N, uint8_t C>
 struct alignas(64) deck {
-    uint8_t stack[4];	// Holds the rank it is expecting next
-    uint8_t n;
+    //uint8_t free[4];	///< Free cells would go here
+    uint8_t stack[4];	///< Holds the next expected rank
+    uint8_t n;		///< Cards remainings
     ::card cards[N];
 
 
@@ -89,10 +100,14 @@ struct alignas(64) deck {
 	cards[b] = tmp;
     }
 
-    // Microsoft Freecell LCG + top-down Fisher-Yates, then reverse to
-    // match KPat's takeLast()-style dealing (kpat/src/freecell.cpp:184).
-    // After this, cards[r*8 + c] is the card at col c, row r of the
-    // KPat tableau.
+    /**
+     * Microsoft Freecell LCG + top-down Fisher-Yates, then reverse to
+     * match KPat's takeLast()-style dealing (kpat/src/freecell.cpp:184).
+     * After this, cards[r*8 + c] is the card at col c, row r of the
+     * KPat tableau.
+     *
+     * @param seed the game seed
+     */
     void shuffle(unsigned int seed) {
 	for (auto i = N; i > 1; --i) {
 	    seed = 214013 * seed + 2531011;
@@ -103,8 +118,9 @@ struct alignas(64) deck {
 	    swap(i, j);
     }
 
-    // Returns remaining cards (0 == fully solvable). Sweeps bottom-to-top
-    // repeatedly until a sweep places nothing.
+    /**
+     * Returns remaining cards (0 == fully solvable). Sweeps bottom-to-top
+     * repeatedly until a sweep places nothing. */
     uint8_t solve() {
 	while (n) {
 	    bool progress = false;
@@ -149,9 +165,11 @@ struct alignas(64) deck {
     }
 
 
-    // Freecell deal layout: 8 columns, row-major.
-    // Top row: 4 (empty) free cells then 4 foundation slots from stack[].
-    // Tableau: card k -> column (k % 8), row (k / 8). 0xff means consumed.
+    /**
+     * Freecell deal layout: 8 columns, row-major.
+     * Top row: 4 (empty) free cells then 4 foundation slots from stack[].
+     * Tableau: card k -> column (k % 8), row (k / 8). 0xff means consumed.
+     */
     void print() const {
 	constexpr unsigned cols = 8;
 
@@ -194,7 +212,7 @@ typedef deck<52, 8> freecell_deck;
 static_assert(sizeof(freecell_deck) == 64,  "freecell_deck should pad to one cache line");
 static_assert(alignof(freecell_deck) == 64, "freecell_deck should be cache-line aligned");
 
-// MS Freecell deal numbers are 1..2^31-1.
+/** MS Freecell deal numbers are 1..2^31-1. */
 constexpr unsigned MAX_SEED = 0x7fffffff;
 
 static void usage(const char *prog) {
